@@ -1,1 +1,0 @@
-savedcmd_/home/ido/Desktop/sniffer/sniffer.ko := ld -r -m elf_x86_64 -z noexecstack --no-warn-rwx-segments --build-id=sha1  -T scripts/module.lds -o /home/ido/Desktop/sniffer/sniffer.ko /home/ido/Desktop/sniffer/sniffer.o /home/ido/Desktop/sniffer/sniffer.mod.o
