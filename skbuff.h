@@ -1,5 +1,5 @@
 #ifndef SKBUFF_H
-#define SKBUFF_H 
+#define SKBUFF_H
 
 #include <stdint.h>
 
