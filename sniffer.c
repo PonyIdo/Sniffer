@@ -1,4 +1,4 @@
-#undef __KERNEL__
+  #undef __KERNEL__
 #define __KERNEL__
 #undef MODULE
 #define MODULE
@@ -32,29 +32,28 @@ typedef struct packets_lst_t {
 } packets_lst;
 
 
-packets_lst *lst; /* LIFO */
-
+packets_lst *lst; /* FIFO */
 
 static packets_node* get_packet(){
-  packets_node* curr;
-  if (head == NULL){
-    return NULL;
-  }
+  // store first value
+  packets_node_t temp_first = lst.first;
 
-  curr = head;
-  head = next;
+  // remove first
+  lst->first = lst->first->next;
+
+  return temp_first;
 }
 
 
+static void add_packet(struct sk_buff *packet){
+  // place the packet in a node
+  struct packets_node_t new_last = {
+    packet,
+    lst.last
+  };
 
-static void add_packet(){
-  packets_node* curr;
-  if (head == NULL){
-    return NULL;
-  }
-
-  curr = head;
-  head = next;
+  // add the node to the back of the list
+  lst.last = &new_last;
 }
 
 
@@ -81,19 +80,34 @@ static int device_release( struct inode* inode,
 //---------------------------------------------------------------
 // a process which has already opened
 // the device file attempts to read from it
+//todo
 static ssize_t device_read( struct file* file,
                             char __user* buffer,
                             size_t       length,
                             loff_t*      offset )
 {
 
-
+  sk_buff *packet;
   // read doesnt really do anything (for now)
   printk( "Invocing device_read");
   //invalid argument error
 
-  curr_channel = get_channel(file_slot->slot_number, file_slot->channel_id);
+  packet = get_packet();
+  
+  if (length<curr_channel->length){
+    return -ENOSPC;
+  }
 
+
+  if (curr_channel->message == NULL){
+    return -EWOULDBLOCK;
+  }
+
+  for( i = 0; i < curr_channel->length; ++i ) {
+    if(put_user(curr_channel->message[i], &buffer[i]) !=0){
+      return -EFAULT;
+    }
+  }
 
 
   return -EINVAL;
@@ -123,7 +137,7 @@ static long device_ioctl( struct   file* file,
 
 // --------------------------------------------
 // Hook function
-static unsigned int drop_google(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
+static unsigned int handle_packet(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
     struct iphdr *ip_header;
     //struct udphdr *udp_header;
@@ -182,7 +196,7 @@ static int __init simple_init(void)
     }
 
     netfilter_hook = kmalloc(sizeof(const struct nf_hook_ops), GFP_KERNEL | __GFP_ZERO);
-    netfilter_hook->hook = drop_google;
+    netfilter_hook->hook = handle_packet;
     netfilter_hook->hooknum = NF_INET_PRE_ROUTING;
     netfilter_hook->pf = PF_INET;
     netfilter_hook->priority = NF_IP_PRI_FIRST;
