@@ -1,20 +1,10 @@
-#include "packetdata.h"
-#include <netinet/ip.h>
-
 #ifndef SKBFUNCS_H
 #define SKBFUNCS_H 
 
+#include "skbfuncs.c"
 
-unsigned char getPacket_protocol(PacketData *packetData){
-    unsigned char *headptr = packetData->head;
-    uint16_t transport_offset = packetData->transport_header;
-    unsigned int len = packetData->len;
-    
+unsigned char getPacket_protocol(SK_Buff *skbuff);
 
-    unsigned char *transport_headerptr = headptr + transport_offset;
-    struct iphdr *ip_header = (struct iphdr *)transport_headerptr;
-    unsigned char protocol = ip_header->protocol;
-    return protocol;
-}
+un
 
 #endif

@@ -1,9 +1,8 @@
 #include <stdio.h>
-#include "packetdata.h"
 #include "skbFuncs.h"
 
 int main(){
-    PacketData *packetDataPtr;
-    getPacket_protocol(packetDataPtr);
+    SK_Buff *skbuff;//pony give me
+    getPacket_protocol(skbuff);
     return 0;
 }
