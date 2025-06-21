@@ -1,7 +1,7 @@
-#include <stdint.h>
-
 #ifndef SKBUFF_H
 #define SKBUFF_H 
+
+#include <stdint.h>
 
 typedef struct {
     unsigned char *head;
