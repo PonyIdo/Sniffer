@@ -41,6 +41,16 @@ static struct packets_node_t* get_packet(void){
   // store first value
   struct packets_node_t *packet = lst->first;
 
+  return packet;
+}
+
+static struct packets_node_t* pop_packet(void){
+  // check if first exists
+  if (!lst->first) return NULL;
+
+  // store first value
+  struct packets_node_t *packet = lst->first;
+
   // remove first
   lst->first = lst->first->next;
 
@@ -104,8 +114,8 @@ static ssize_t device_read( struct file* file,
 {
   unsigned char *data;
   uint32_t len;
-  unsigned int network_offset;
-  unsigned int transport_offset;
+  uint16_t network_offset;
+  uint16_t transport_offset;
 
   struct packets_node_t *node = get_packet();
   if (!node) return -EWOULDBLOCK;
@@ -123,60 +133,86 @@ static ssize_t device_read( struct file* file,
 
   switch (current_read_mode) {
     case READ_MODE_LEN:
-      if (length < sizeof(len))
-          return -ENOSPC;
+      if (length < sizeof(len)) {
+        pop_packet();
+        kfree_skb(packet);
+        kfree(node);
+        return -ENOSPC;
+      }
 
-      if (copy_to_user(buffer, &len, sizeof(len)))
-          return -EFAULT;
+      if (copy_to_user(buffer, &len, sizeof(len))) {
+        pop_packet();
+        kfree_skb(packet);
+        kfree(node);
+        return -EFAULT;
+      }
 
-      kfree_skb(packet);
-      kfree(node);
       return sizeof(len);
 
 
     case READ_MODE_DATA:
       data = packet->data;
 
-      if (length < len)
-          return -ENOSPC;
+      if (length < len) {
+        pop_packet();
+        kfree_skb(packet);
+        kfree(node);
+        return -ENOSPC;
+      }
 
-      if (copy_to_user(buffer, data, len))
-          return -EFAULT;
+      if (copy_to_user(buffer, data, len)) {
+        pop_packet();
+        kfree_skb(packet);
+        kfree(node);
+        return -EFAULT;
+      }
 
-      kfree_skb(packet);
-      kfree(node);
       return len;
 
 
     case READ_MODE_NETWORK_OFFSET:
-      network_offset = (unsigned int)((unsigned char *)packet->network_header - (unsigned char *)packet->head);
+      network_offset = (uint16_t)(packet->network_header);
 
-      if (length < sizeof(network_offset))
-          return -ENOSPC;
+      if (length < sizeof(network_offset)) {
+        pop_packet();
+        kfree_skb(packet);
+        kfree(node);
+        return -ENOSPC;
+      }
 
-      if (copy_to_user(buffer, &network_offset, sizeof(network_offset)))
-          return -EFAULT;
+      if (copy_to_user(buffer, &network_offset, sizeof(network_offset))) {
+        pop_packet();
+        kfree_skb(packet);
+        kfree(node);
+        return -EFAULT;
+      }
 
-      kfree_skb(packet);
-      kfree(node);
       return sizeof(network_offset);
 
 
     case READ_MODE_TRANSPORT_OFFSET:
-      transport_offset = (unsigned int)((unsigned char *)packet->transport_header - (unsigned char *)packet->head);
+      transport_offset = (uint16_t)(packet->transport_header);
 
-      if (length < sizeof(transport_offset))
-          return -ENOSPC;
+      if (length < sizeof(transport_offset)) {
+        pop_packet();
+        kfree_skb(packet);
+        kfree(node);
+        return -ENOSPC;
+      }
 
-      if (copy_to_user(buffer, &transport_offset, sizeof(transport_offset)))
-          return -EFAULT;
+      if (copy_to_user(buffer, &transport_offset, sizeof(transport_offset))) {
+        pop_packet();
+        kfree_skb(packet);
+        kfree(node);
+        return -EFAULT;
+      }
 
-      kfree_skb(packet);
-      kfree(node);
+      pop_packet();
       return sizeof(transport_offset);
 
 
     default:
+      pop_packet();
       kfree_skb(packet);
       kfree(node);
       return -EINVAL;
@@ -227,8 +263,9 @@ static unsigned int handle_packet(void *priv, struct sk_buff *skb, const struct 
   if (ip_header)
     printk(KERN_DEBUG "[sniffer] caught src %pI4 dest %pI4!\n", &ip_header->saddr, &ip_header->daddr);
 
-  add_packet(skb);
+  printk(KERN_DEBUG "size: %u %u\noffsets: %u %u", skb->len, skb->truesize, skb->network_header, skb->transport_header);
 
+  add_packet(skb);
   return NF_STOLEN;
 }
 
