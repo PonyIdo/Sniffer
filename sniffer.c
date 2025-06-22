@@ -22,38 +22,49 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 typedef struct packets_node_t {
   struct sk_buff *packet;
-  packets_node_t *next;
+  struct packets_node_t *next;
 } packets_node;
 
 
 typedef struct packets_lst_t {
-  packets_node_t *first;
-  packets_node_t *last;
+  struct packets_node_t *first;
+  struct packets_node_t *last;
 } packets_lst;
 
 
 packets_lst *lst; /* FIFO */
 
-static packets_node* get_packet(){
+static struct packets_node_t* get_packet(void){
+  // check if first exists
+  if (!lst->first) return NULL;
+
   // store first value
-  packets_node_t temp_first = lst.first;
+  struct packets_node_t *packet = lst->first;
 
   // remove first
   lst->first = lst->first->next;
 
-  return temp_first;
+  return packet;
 }
 
 
 static void add_packet(struct sk_buff *packet){
   // place the packet in a node
-  struct packets_node_t new_last = {
-    packet,
-    lst.last
-  };
+  struct packets_node_t *new_last = kmalloc(sizeof(struct packets_node_t), GFP_KERNEL | __GFP_ZERO);
+  if (!new_last) return;
+
+  new_last->packet = packet;
+  new_last->next = NULL;
 
   // add the node to the back of the list
-  lst.last = &new_last;
+  if (lst->last) {
+    lst->last->next = new_last;
+  }
+  else {
+    lst->first = new_last;
+  }
+
+  lst->last = new_last;
 }
 
 
@@ -80,37 +91,96 @@ static int device_release( struct inode* inode,
 //---------------------------------------------------------------
 // a process which has already opened
 // the device file attempts to read from it
-//todo
+static unsigned int current_read_mode = 0;
+#define READ_MODE_LEN 0
+#define READ_MODE_DATA 1
+#define READ_MODE_NETWORK_OFFSET 2
+#define READ_MODE_TRANSPORT_OFFSET 3
+
 static ssize_t device_read( struct file* file,
                             char __user* buffer,
                             size_t       length,
                             loff_t*      offset )
 {
+  unsigned char *data;
+  uint32_t len;
+  unsigned int network_offset;
+  unsigned int transport_offset;
 
-  sk_buff *packet;
-  // read doesnt really do anything (for now)
-  printk( "Invocing device_read");
-  //invalid argument error
+  struct packets_node_t *node = get_packet();
+  if (!node) return -EWOULDBLOCK;
 
-  packet = get_packet();
-  
-  if (length<curr_channel->length){
-    return -ENOSPC;
-  }
-
-
-  if (curr_channel->message == NULL){
+  struct sk_buff *packet = node->packet;
+  if (!packet) {
+    kfree(node);
     return -EWOULDBLOCK;
   }
 
-  for( i = 0; i < curr_channel->length; ++i ) {
-    if(put_user(curr_channel->message[i], &buffer[i]) !=0){
-      return -EFAULT;
-    }
+  printk( "Invocing device_read");
+  if (!packet) return -EWOULDBLOCK;
+
+  len = packet->len;
+
+  switch (current_read_mode) {
+    case READ_MODE_LEN:
+      if (length < sizeof(len))
+          return -ENOSPC;
+
+      if (copy_to_user(buffer, &len, sizeof(len)))
+          return -EFAULT;
+
+      kfree_skb(packet);
+      kfree(node);
+      return sizeof(len);
+
+
+    case READ_MODE_DATA:
+      data = packet->data;
+
+      if (length < len)
+          return -ENOSPC;
+
+      if (copy_to_user(buffer, data, len))
+          return -EFAULT;
+
+      kfree_skb(packet);
+      kfree(node);
+      return len;
+
+
+    case READ_MODE_NETWORK_OFFSET:
+      network_offset = (unsigned int)((unsigned char *)packet->network_header - (unsigned char *)packet->head);
+
+      if (length < sizeof(network_offset))
+          return -ENOSPC;
+
+      if (copy_to_user(buffer, &network_offset, sizeof(network_offset)))
+          return -EFAULT;
+
+      kfree_skb(packet);
+      kfree(node);
+      return sizeof(network_offset);
+
+
+    case READ_MODE_TRANSPORT_OFFSET:
+      transport_offset = (unsigned int)((unsigned char *)packet->transport_header - (unsigned char *)packet->head);
+
+      if (length < sizeof(transport_offset))
+          return -ENOSPC;
+
+      if (copy_to_user(buffer, &transport_offset, sizeof(transport_offset)))
+          return -EFAULT;
+
+      kfree_skb(packet);
+      kfree(node);
+      return sizeof(transport_offset);
+
+
+    default:
+      kfree_skb(packet);
+      kfree(node);
+      return -EINVAL;
   }
-
-
-  return -EINVAL;
 }
 
 //---------------------------------------------------------------
@@ -130,7 +200,21 @@ static long device_ioctl( struct   file* file,
                           unsigned int   ioctl_command_id,
                           unsigned long  ioctl_param )
 {
-  return SUCCESS;
+  switch (ioctl_command_id) {
+    case SNIFFER_SET_MODE:
+      unsigned int mode;
+
+      if (copy_from_user(&mode, (unsigned int __user *)ioctl_param, sizeof(unsigned int))) {
+        return -EFAULT;  // failed to copy from userspace
+      }
+
+      current_read_mode = mode;
+      printk(KERN_DEBUG "Mode set to %u\n", current_read_mode);
+      return 0;
+
+    default:
+      return -EINVAL; // unknown ioctl command
+  }
 }
 
 
@@ -139,17 +223,13 @@ static long device_ioctl( struct   file* file,
 // Hook function
 static unsigned int handle_packet(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
-    struct iphdr *ip_header;
-    //struct udphdr *udp_header;
-    ip_header = ip_hdr(skb);
+  struct iphdr *ip_header = ip_hdr(skb);
+  if (ip_header)
+    printk(KERN_DEBUG "[sniffer] caught src %pI4 dest %pI4!\n", &ip_header->saddr, &ip_header->daddr);
 
-    /*ip_header = ip_hdr(skb);
-    if (!ip_header)
-        return NF_ACCEPT;
+  add_packet(skb);
 
-    //if (ip_header->protocol == IPPROTO_UDP)*/
-    printk(KERN_DEBUG "caught src %pI4 dest %pI4!\n", &ip_header->saddr, &ip_header->daddr);
-    return NF_ACCEPT;
+  return NF_STOLEN;
 }
 
 
@@ -195,6 +275,9 @@ static int __init simple_init(void)
         return rc;
     }
 
+    lst = kmalloc(sizeof(struct packets_lst_t), GFP_KERNEL | __GFP_ZERO);
+    if (!lst) return -ENOMEM;
+
     netfilter_hook = kmalloc(sizeof(const struct nf_hook_ops), GFP_KERNEL | __GFP_ZERO);
     netfilter_hook->hook = handle_packet;
     netfilter_hook->hooknum = NF_INET_PRE_ROUTING;
@@ -213,13 +296,25 @@ static int __init simple_init(void)
 //---------------------------------------------------------------
 static void __exit simple_cleanup(void)
 {
-    // Unregister the device
-    // Should always succeed
-    unregister_chrdev(MAJOR_NUM, DEVICE_RANGE_NAME);
-    nf_unregister_net_hook(&init_net, netfilter_hook);
-    kfree(netfilter_hook);
+  // Unregister the device
+  // Should always succeed
+  unregister_chrdev(MAJOR_NUM, DEVICE_RANGE_NAME);
+  nf_unregister_net_hook(&init_net, netfilter_hook);
+  kfree(netfilter_hook);
 
-    printk( "removing is successful. ");
+  packets_node *cur = lst->first;
+  while (cur != NULL) {
+    packets_node *next = cur->next;
+
+    if (cur->packet)
+      kfree_skb(cur->packet);
+
+    kfree(cur);
+    cur = next;
+  }
+  kfree(lst);
+
+  printk( "removing is successful. ");
 
 }
 
