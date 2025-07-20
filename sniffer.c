@@ -1,4 +1,4 @@
-  #undef __KERNEL__
+#undef __KERNEL__
 #define __KERNEL__
 #undef MODULE
 #define MODULE
@@ -79,7 +79,7 @@ static void add_packet(struct sk_buff *packet){
 
 
 
-//================== DEVICE FUNCTIONS ===========================
+//================== DEVICE FUNCTIONS ===========================t
 static int device_open( struct inode* inode,
                         struct file*  file )
 {
@@ -122,6 +122,7 @@ static ssize_t device_read( struct file* file,
 
   struct sk_buff *packet = node->packet;
   if (!packet) {
+    pop_packet();
     kfree(node);
     return -EWOULDBLOCK;
   }
@@ -134,16 +135,12 @@ static ssize_t device_read( struct file* file,
   switch (current_read_mode) {
     case READ_MODE_LEN:
       if (length < sizeof(len)) {
-        pop_packet();
-        kfree_skb(packet);
-        kfree(node);
+        free_packet(packet, node);
         return -ENOSPC;
       }
 
       if (copy_to_user(buffer, &len, sizeof(len))) {
-        pop_packet();
-        kfree_skb(packet);
-        kfree(node);
+        free_packet(packet, node);
         return -EFAULT;
       }
 
@@ -154,16 +151,12 @@ static ssize_t device_read( struct file* file,
       data = packet->data;
 
       if (length < len) {
-        pop_packet();
-        kfree_skb(packet);
-        kfree(node);
+        free_packet(packet, node);
         return -ENOSPC;
       }
 
       if (copy_to_user(buffer, data, len)) {
-        pop_packet();
-        kfree_skb(packet);
-        kfree(node);
+        free_packet(packet, node);
         return -EFAULT;
       }
 
@@ -174,16 +167,12 @@ static ssize_t device_read( struct file* file,
       network_offset = (uint16_t)(packet->network_header);
 
       if (length < sizeof(network_offset)) {
-        pop_packet();
-        kfree_skb(packet);
-        kfree(node);
+        free_packet(packet, node);
         return -ENOSPC;
       }
 
       if (copy_to_user(buffer, &network_offset, sizeof(network_offset))) {
-        pop_packet();
-        kfree_skb(packet);
-        kfree(node);
+        free_packet(packet, node);
         return -EFAULT;
       }
 
@@ -194,16 +183,12 @@ static ssize_t device_read( struct file* file,
       transport_offset = (uint16_t)(packet->transport_header);
 
       if (length < sizeof(transport_offset)) {
-        pop_packet();
-        kfree_skb(packet);
-        kfree(node);
+        free_packet(packet, node);
         return -ENOSPC;
       }
 
       if (copy_to_user(buffer, &transport_offset, sizeof(transport_offset))) {
-        pop_packet();
-        kfree_skb(packet);
-        kfree(node);
+        free_packet(packet, node);
         return -EFAULT;
       }
 
@@ -212,11 +197,15 @@ static ssize_t device_read( struct file* file,
 
 
     default:
-      pop_packet();
-      kfree_skb(packet);
-      kfree(node);
+      free_packet(packet, node);
       return -EINVAL;
   }
+}
+
+static void free_packet(struct sk_buff *packet, struct packets_node_t *node){
+  pop_packet();
+  kfree_skb(packet);
+  kfree(node);
 }
 
 //---------------------------------------------------------------
